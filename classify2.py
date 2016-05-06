@@ -11,26 +11,16 @@
 #
 ########################################################################
 
-#all
 import cv2
 import numpy
 import sys
-
-#textons
-import struct
-import os
-import math
-import json
-import re
-import datetime
-
-#eigen
 import glob
 
 ######################################################################
 if len(sys.argv) != 2:
-    print 'usage: python', sys.argv[0], 'filepath_to_train_and_test'
+    print 'usage: python', sys.argv[0], 'filepath_to_train_and_test_folders'
     print ' e.g.: python', sys.argv[0], 'images/faces/'
+    print '   or: python', sys.argv[0], 'images/small/'
     print
     sys.exit(0)
 
@@ -43,12 +33,30 @@ def upscale(img):
     return cv2.resize(img, (img.shape[1]*zoom, img.shape[0]*zoom),
                       interpolation=cv2.INTER_NEAREST)
 
+def label_image(image, text):
+
+    h = image.shape[0]
+
+    cv2.putText(image, text, (8, h-16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                (0,0,0), 3, cv2.LINE_AA)
+
+    cv2.putText(image, text, (8, h-16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                (255,255,255), 1, cv2.LINE_AA)
+
+
 class EigenFacesDemo:
 
     def __init__(self):
         self.image_shape = None
 
-        self.train_images = self.load_all(img_folder+'train/*')
+        # AN or N = angry, SU or U = suprised, SA or A = sad
+        train_AN = self.load_all(img_folder+'train/*ANS.JPG')
+        train_SU = self.load_all(img_folder+'train/*SUS.JPG')
+        train_SA = self.load_all(img_folder+'train/*SAS.JPG')
+        self.train_images = train_AN + train_SU + train_SA
+        self.train_labels = len(train_AN)*'N'+len(train_SU)*'U'+len(train_SA)*'A'
 
         self.image_w = self.image_shape[1]
         self.image_h = self.image_shape[0]
@@ -68,10 +76,16 @@ class EigenFacesDemo:
 
         self.train_proj = self.project_all(self.train_images)
 
-        self.test_images = self.load_all(img_folder+'test/*')
+        # AN or N = angry, SU or U = suprised, SA or A = sad
+        test_AN = self.load_all(img_folder+'test/*ANS.JPG')
+        test_SU = self.load_all(img_folder+'test/*SUS.JPG')
+        test_SA = self.load_all(img_folder+'test/*SAS.JPG')
+        self.test_images = test_AN + test_SU + test_SA
+        self.test_labels = len(test_AN)*'N'+len(test_SU)*'U'+len(test_SA)*'A'
+
         self.num_test = len(self.test_images)
         self.test_proj = self.project_all(self.test_images)
-        print 'loated {} test_images'.format(self.num_test)
+        print 'loaded {} test_images'.format(self.num_test)
 
     def spacer(self):
         return numpy.zeros( (self.image_h, 8), dtype='float32' )
@@ -173,8 +187,10 @@ class EigenFacesDemo:
 
         while 1:
             if (i >= self.num_vecs):
+                print 'showing mean'
                 img = self.mean.reshape(self.image_shape)
             else:
+                print 'showing evec'
                 img = self.visualize_evec(self.evecs[i])
             cv2.imshow(win, upscale(img))
             if self.should_quit(): break
@@ -298,13 +314,3 @@ if __name__ == '__main__':
     #demo.demo_vecs()
     #demo.demo_classify()
     #demo.demo_reconstruct()
-
-'''
-for i in range(num_vecs):
-    cv2.imshow('win', imgify(evecs[i]))
-    while cv2.waitKey(5) < 0: pass
-
-
-cv2.imshow('win', mean.reshape(image_shape))
-while cv2.waitKey(5) < 0: pass
-'''
