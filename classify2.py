@@ -50,7 +50,7 @@ class EigenFacesDemo:
 
     def __init__(self):
         self.image_shape = None
-
+        """
         # AN or N = angry, SU or U = suprised, SA or A = sad
         train_AN = self.load_all(img_folder+'train/*ANS.JPG')
         train_SU = self.load_all(img_folder+'train/*SUS.JPG')
@@ -75,16 +75,18 @@ class EigenFacesDemo:
         print 'got {} eigenvectors'.format(self.num_vecs)
 
         self.train_proj = self.project_all(self.train_images)
-
+        """
         # AN or N = angry, SU or U = suprised, SA or A = sad
         test_AN = self.load_all(img_folder+'test/*ANS.JPG')
         test_SU = self.load_all(img_folder+'test/*SUS.JPG')
         test_SA = self.load_all(img_folder+'test/*SAS.JPG')
+
+        self.test_datasets = [test_AN,test_SU,test_SA]
         self.test_images = test_AN + test_SU + test_SA
         self.test_labels = len(test_AN)*'N'+len(test_SU)*'U'+len(test_SA)*'A'
 
         self.num_test = len(self.test_images)
-        self.test_proj = self.project_all(self.test_images)
+        #self.test_proj = self.project_all(self.test_images)
         print 'loaded {} test_images'.format(self.num_test)
 
     def spacer(self):
@@ -111,7 +113,8 @@ class EigenFacesDemo:
             'v - Demo eigenvectors',
             'r - Demo reconstruction',
             'c - Demo classification',
-            'p - Demo PCA'
+            'p - Demo PCA',
+            'm - class means (Actually run)'
         ]
         for i in range(len(strings)):
             cv2.putText(img, strings[i],
@@ -132,6 +135,8 @@ class EigenFacesDemo:
                 func = self.demo_classify
             elif k == ord('p'):
                 func = self.demo_pca
+            elif k == ord('m'):
+                func = self.demo_means
             elif k == 27:
                 break
             if func is not None:
@@ -139,6 +144,57 @@ class EigenFacesDemo:
                 func()
                 self.make_window(win)
                 cv2.imshow(win, img)
+
+    def demo_means(self):
+        win = 'Mean and vectors'
+        self.make_window(win)
+
+        train_AN = self.load_all(img_folder+'train/*ANS.JPG')
+        train_SU = self.load_all(img_folder+'train/*SUS.JPG')
+        train_SA = self.load_all(img_folder+'train/*SAS.JPG')
+
+        # test getting eigenvectors for 1 img
+        pic = numpy.array(train_AN[0].flatten())
+        pic_mean, pic_evecs= cv2.PCACompute(pic, mean=None, maxComponents=20)
+        print 'pic_mean', pic_mean
+        print 'evecs', pic_evecs
+        """
+        num_vecs = pic_evecs.shape[0]
+        print 'got {} eigenvectors'.format(num_vecs)
+
+        print 'showing mean'
+        img = pic_mean.reshape(self.image_shape)
+        cv2.imshow(win, upscale(img))
+        if self.should_quit(): return
+        for i in range(num_vecs):
+            print 'showing evec', i, 'of', num_vecs
+            img = self.visualize_evec(pic_evecs[i])
+            cv2.imshow(win, upscale(img))
+            if self.should_quit(): break
+        """
+
+        self.train_datasets = [train_AN,train_SU,train_SA]
+        self.means = [0,0,0]
+        self.evecs = [0,0,0]
+        for k in range(len(self.train_datasets)):
+            self.train_datasets[k] = numpy.array( [ x.flatten() for x in self.train_datasets[k] ] )
+            self.means[k], self.evecs[k] = cv2.PCACompute(self.train_datasets[k], mean=None, maxComponents=20)
+            num_vecs = self.evecs[k].shape[0]
+            print 'got {} eigenvectors'.format(num_vecs)
+
+            print 'showing mean'
+            img = self.means[k].reshape(self.image_shape)
+            cv2.imshow(win, upscale(img))
+            if self.should_quit(): return
+            for i in range(num_vecs):
+                print 'showing evec', i+1, 'of', num_vecs
+                img = self.visualize_evec(self.evecs[k][i])
+                cv2.imshow(win, upscale(img))
+                if self.should_quit(): break
+
+        cv2.destroyWindow(win)
+
+
 
     def demo_reconstruct(self):
         win = 'Left: orig., Right: recons.'
