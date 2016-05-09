@@ -214,6 +214,22 @@ class EigenFacesDemo:
         matcher = cv2.flann.Index(self.train_proj,
                                   dict(algorithm = FLANN_INDEX_KDTREE,
                                        trees = 4))
+        # flann - put vector or set of vectors into matcher
+        # input to index: matrix w/ every row as potential vector to match
+        # train_proj = m x n matrix where m is examples, n is dimensions
+        # test_proj = p x n matrix where p is number of test vectors &
+        # n is number of dimensions
+        # can test a bunch at a time or one at a time
+        # this code tests a bunch at a time
+        # pass in k (single nearest neighbor)
+        # gives back matches matrix - should be a matrix that is p x k
+        # where p = number of vectors passed in to matcher & k is same k
+        # matches stores integer index of vector i that we passed in
+        # matches gives index of closest training example to vec 0, index
+        # of second closest to 0, 3rd closest to 0
+        # indexes in original training data
+        # train_proj = PCA weights of every single training image
+        
         k = 1
         matches, dist = matcher.knnSearch(self.test_proj, k, params={})
         #m = 20
