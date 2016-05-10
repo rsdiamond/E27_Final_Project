@@ -15,6 +15,7 @@ import cv2
 import numpy
 import sys
 import glob
+#import sklearn
 
 ######################################################################
 if len(sys.argv) != 2:
@@ -58,13 +59,6 @@ class EigenFacesDemo:
         self.train_images = train_AN + train_SU + train_SA
         self.train_labels = len(train_AN)*'N'+len(train_SU)*'U'+len(train_SA)*'A'
 
-        self.image_w = self.image_shape[1]
-        self.image_h = self.image_shape[0]
-        self.image_pixels = self.image_w*self.image_h
-
-        self.num_train = len(self.train_images)
-        self.row_shape = (1, self.image_pixels)
-
         print 'loaded {} train_images'.format(self.num_train)
 
         self.train_data = numpy.array( [ x.flatten() for x in self.train_images ] )
@@ -88,6 +82,22 @@ class EigenFacesDemo:
         self.num_test = len(self.test_images)
         #self.test_proj = self.project_all(self.test_images)
         print 'loaded {} test_images'.format(self.num_test)
+
+        train_AN = self.load_all(img_folder+'train/*ANS.JPG')
+        train_SU = self.load_all(img_folder+'train/*SUS.JPG')
+        train_SA = self.load_all(img_folder+'train/*SAS.JPG')
+
+        self.train_datasets = [train_AN,train_SU,train_SA]
+        self.means = [0,0,0]
+        self.evecs = [0,0,0]
+        self.train_proj = [0,0,0]
+
+        self.image_w = self.image_shape[1]
+        self.image_h = self.image_shape[0]
+        self.image_pixels = self.image_w*self.image_h
+
+        self.num_train = sum(len(x) for x in self.train_datasets)
+        self.row_shape = (1, self.image_pixels)
 
     def spacer(self):
         return numpy.zeros( (self.image_h, 8), dtype='float32' )
@@ -149,33 +159,6 @@ class EigenFacesDemo:
         win = 'Mean and vectors'
         self.make_window(win)
 
-        train_AN = self.load_all(img_folder+'train/*ANS.JPG')
-        train_SU = self.load_all(img_folder+'train/*SUS.JPG')
-        train_SA = self.load_all(img_folder+'train/*SAS.JPG')
-
-        # test getting eigenvectors for 1 img
-        pic = numpy.array(train_AN[0].flatten())
-        pic_mean, pic_evecs= cv2.PCACompute(pic, mean=None, maxComponents=20)
-        print 'pic_mean', pic_mean
-        print 'evecs', pic_evecs
-        """
-        num_vecs = pic_evecs.shape[0]
-        print 'got {} eigenvectors'.format(num_vecs)
-
-        print 'showing mean'
-        img = pic_mean.reshape(self.image_shape)
-        cv2.imshow(win, upscale(img))
-        if self.should_quit(): return
-        for i in range(num_vecs):
-            print 'showing evec', i, 'of', num_vecs
-            img = self.visualize_evec(pic_evecs[i])
-            cv2.imshow(win, upscale(img))
-            if self.should_quit(): break
-        """
-
-        self.train_datasets = [train_AN,train_SU,train_SA]
-        self.means = [0,0,0]
-        self.evecs = [0,0,0]
         for k in range(len(self.train_datasets)):
             self.train_datasets[k] = numpy.array( [ x.flatten() for x in self.train_datasets[k] ] )
             self.means[k], self.evecs[k] = cv2.PCACompute(self.train_datasets[k], mean=None, maxComponents=20)
@@ -185,12 +168,16 @@ class EigenFacesDemo:
             print 'showing mean'
             img = self.means[k].reshape(self.image_shape)
             cv2.imshow(win, upscale(img))
-            if self.should_quit(): return
+            if self.should_quit(): break
+
             for i in range(num_vecs):
                 print 'showing evec', i+1, 'of', num_vecs
                 img = self.visualize_evec(self.evecs[k][i])
                 cv2.imshow(win, upscale(img))
                 if self.should_quit(): break
+
+            self.train_proj[k] = numpy.array( [ self.project_all(x, k) for x in self.train_datasets ] )
+
 
         cv2.destroyWindow(win)
 
@@ -229,12 +216,20 @@ class EigenFacesDemo:
         # of second closest to 0, 3rd closest to 0
         # indexes in original training data
         # train_proj = PCA weights of every single training image
-        
+
         k = 1
         matches, dist = matcher.knnSearch(self.test_proj, k, params={})
         #m = 20
         print 'matches.shape', matches.shape
         print matches[0,0]
+
+#       Linear SVC Stuff
+#        SVC = sklearn.svm.LinearSVC(C=1.0, class_weight=None, dual=True, fit_intercept=True,
+#            intercept_scaling=1, loss='squared_hinge', max_iter=1000,
+#            multi_class='ovr', penalty='12', random_state=None, tol=0.0001,
+#            verbose=0)
+#
+#        train_new = SVC.fit(train_proj, test_proj
 
         win = 'Left: query, Right: NN'
         self.make_window(win)
@@ -360,14 +355,14 @@ class EigenFacesDemo:
             rval.append(img)
         return rval
 
-    def project(self, img):
-        return cv2.PCAProject(img.reshape(self.row_shape), self.mean, self.evecs)
+    def project(self, img, k):
+        return cv2.PCAProject(img.reshape(self.row_shape), self.means[k], self.evecs[k])
 
-    def backproject(self, w):
-        return cv2.PCABackProject(w.reshape((1, self.num_vecs)), self.mean, self.evecs).reshape(self.image_shape)
+    def backproject(self, w, k):
+        return cv2.PCABackProject(w.reshape((1, self.num_vecs)), self.means[k], self.evecs[k]).reshape(self.image_shape)
 
-    def project_all(self, images):
-        return numpy.array([ self.project(x).flatten() for x in images ])
+    def project_all(self, images, k):
+        return numpy.array([ self.project(x, k).flatten() for x in images ])
 
     def visualize_evec(self, vec):
         return ( 0.5 + (0.5 / numpy.linalg.norm(vec, numpy.inf)) *
