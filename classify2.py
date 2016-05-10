@@ -75,11 +75,15 @@ class EigenFacesDemo:
         test_SU = self.load_all(img_folder+'test/*SUS.JPG')
         test_SA = self.load_all(img_folder+'test/*SAS.JPG')
 
-        self.test_datasets = [test_AN,test_SU,test_SA]
-        self.test_images = test_AN + test_SU + test_SA
+
+
+        #self.test_datasets = [test_AN,test_SU,test_SA]
+        self.test_datasets = test_AN + test_SU + test_SA
         self.test_labels = len(test_AN)*'N'+len(test_SU)*'U'+len(test_SA)*'A'
 
-        self.num_test = len(self.test_images)
+
+
+        self.num_test = len(self.test_labels)
         #self.test_proj = self.project_all(self.test_images)
         print 'loaded {} test_images'.format(self.num_test)
 
@@ -88,6 +92,10 @@ class EigenFacesDemo:
         train_SA = self.load_all(img_folder+'train/*SAS.JPG')
 
         self.train_datasets = [train_AN,train_SU,train_SA]
+        self.train_labels = len(train_AN)*'N'+len(train_SU)*'U'+len(train_SA)*'A'
+        self.num_train = sum(len(x) for x in self.train_datasets)
+
+        #init variables to be filled by demo_means()
         self.means = [0,0,0]
         self.evecs = [0,0,0]
         self.train_proj = [0,0,0]
@@ -95,9 +103,8 @@ class EigenFacesDemo:
         self.image_w = self.image_shape[1]
         self.image_h = self.image_shape[0]
         self.image_pixels = self.image_w*self.image_h
-
-        self.num_train = sum(len(x) for x in self.train_datasets)
         self.row_shape = (1, self.image_pixels)
+
 
     def spacer(self):
         return numpy.zeros( (self.image_h, 8), dtype='float32' )
@@ -176,11 +183,18 @@ class EigenFacesDemo:
                 cv2.imshow(win, upscale(img))
                 if self.should_quit(): break
 
-            self.train_proj[k] = numpy.array( [ self.project_all(x, k) for x in self.train_datasets ] )
+            self.train_proj[k] = self.project_all(self.train_datasets[k], k)
+            #TODO: take out of loop?
+
+        self.test_proj = self.project_all(self.test_datasets, k=0)
+
 
 
         cv2.destroyWindow(win)
-
+        print len(self.train_proj)
+        print self.train_proj[0].shape,
+        print self.train_proj[1].shape,
+        print self.train_proj[2].shape
 
 
     def demo_reconstruct(self):
@@ -198,9 +212,8 @@ class EigenFacesDemo:
 
     def demo_classify(self):
         FLANN_INDEX_KDTREE = 1
-        matcher = cv2.flann.Index(self.train_proj,
-                                  dict(algorithm = FLANN_INDEX_KDTREE,
-                                       trees = 4))
+        flann_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 4)
+        matcher = cv2.flann.Index(self.train_proj[0],flann_params)
         # flann - put vector or set of vectors into matcher
         # input to index: matrix w/ every row as potential vector to match
         # train_proj = m x n matrix where m is examples, n is dimensions
@@ -217,11 +230,14 @@ class EigenFacesDemo:
         # indexes in original training data
         # train_proj = PCA weights of every single training image
 
-        k = 1
+        k = 1 #how many closest matches to return
         matches, dist = matcher.knnSearch(self.test_proj, k, params={})
         #m = 20
         print 'matches.shape', matches.shape
-        print matches[0,0]
+        for i in range(10):
+            print 'matches[i,0]', matches[i,0]
+            print 'label', self.train_labels[matches[i,0]]
+            print 'test type', self.train_labels[i]
 
 #       Linear SVC Stuff
 #        SVC = sklearn.svm.LinearSVC(C=1.0, class_weight=None, dual=True, fit_intercept=True,
