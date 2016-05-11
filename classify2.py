@@ -10,6 +10,12 @@
 # Written for ENGR 27 - Computer Vision
 #
 ########################################################################
+"""
+Questions/Notes:
+ - why does re-running result in worse detection rate?
+ - deal with not finding a face
+"""
+########################################################################
 
 import cv2
 import numpy
@@ -29,10 +35,24 @@ img_folder = sys.argv[1]
 ######################################################################
 
 zoom = 1 #DEBUG was 4
+face_detector = cv2.CascadeClassifier('haarcascade_frontalface_alt.xml')
 
 def upscale(img):
-    return cv2.resize(img, (img.shape[1]*zoom, img.shape[0]*zoom),
+    return cv2.resize(img, (int(img.shape[1]*zoom), int(img.shape[0]*zoom)),
                       interpolation=cv2.INTER_NEAREST)
+
+def resize_square(img):
+    return cv2.resize(img, (250,250),interpolation=cv2.INTER_NEAREST)
+
+def label_emotion(image, text):
+    if text == 'N':
+        label_image(image, 'angry')
+    elif text == 'U':
+        label_image(image, 'suprised')
+    elif text == 'A':
+        label_image(image, 'sad')
+    else:
+        label_image(image, 'unspecified')
 
 def label_image(image, text):
 
@@ -45,6 +65,81 @@ def label_image(image, text):
     cv2.putText(image, text, (8, h-16),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (255,255,255), 1, cv2.LINE_AA)
+
+#CODE TO CROP TO FACES
+########################################################################
+def find_face(img):
+    # img should be grayscale
+    # returns a square subimage that is just the detected face
+    # if no face is found, returns None
+
+    face_rect = None
+
+    #only want to load this once, so make it global variable instead of defining here
+    #face_detector = cv2.CascadeClassifier('haarcascade_frontalface_alt.xml')
+
+
+    # Downsample for faster runtime -- this is important!
+    img_small = downsample(img, 320)
+
+    # Figure out what scale factor we downsampled by - we will need it
+    # to rescale the rectangles returned by the cascade.
+    scl = img.shape[0] / img_small.shape[0]
+
+    # detector returns an n-by-4 array where each row is [x,y,w,h]
+    # (note that w = h for the haarcascade_frontalface_alt.xml classifier)
+    face_rects = numpy.array(face_detector.detectMultiScale(img_small))
+
+    # if we found anything
+    if len(face_rects):
+        if face_rect is None:
+            # if first detection, just choose largest area
+            areas = face_rects[:,2] * face_rects[:,3]
+            face_rect = face_rects[areas.argmax()]
+        else:
+            # otherwise, choose one closest to prev detection
+            face_center = rect_center(face_rect)
+            centers = face_rects[:,:2] + 0.5*face_rects[:,2:]
+            diffs = centers - face_center
+            face_rect = face_rects[(diffs**2).sum(axis=1).argmin()]
+
+    # if we have a face
+    if face_rect is not None:
+
+        # upscale it to get ROI in big image
+        x,y,w,h = rect_scale(face_rect, scl)
+
+        """
+        # draw rectangle in big image
+        cv2.rectangle(img, (x,y), (x+w, y+h), (0,0,255), 1)
+        """
+
+        # get subimage in ROI
+        return img[y:y+h, x:x+h]
+
+    return None
+    """
+    cv2.namedWindow('win')
+    cv2.imshow('win', img)
+    k = cv2.waitKey(5)
+    if k == 27:
+        sys.exit(0)
+    """
+# Downsample an image to have no more than the specified maximum height
+def downsample(src, hmax):
+    h, w = src.shape[:2]
+    while h > hmax:
+        h /= 2
+        w /= 2
+    return cv2.resize(src, (w, h), interpolation=cv2.INTER_AREA)
+
+def rect_center(rect):
+    x,y,w,h = rect
+    return numpy.array( (x+0.5*w, y+0.5*h) )
+
+def rect_scale(rect,scl):
+    return numpy.array(rect)*scl
+########################################################################
 
 
 class EigenFacesDemo:
@@ -75,13 +170,10 @@ class EigenFacesDemo:
         test_SU = self.load_all(img_folder+'test/*SUS.JPG')
         test_SA = self.load_all(img_folder+'test/*SAS.JPG')
 
-
-
         #self.test_datasets = [test_AN,test_SU,test_SA]
         self.test_datasets = test_AN + test_SU + test_SA
+        #self.test_datasets = [resize_square(find_face(x)) for x in self.test_datasets]
         self.test_labels = len(test_AN)*'N'+len(test_SU)*'U'+len(test_SA)*'A'
-
-
 
         self.num_test = len(self.test_labels)
         #self.test_proj = self.project_all(self.test_images)
@@ -91,12 +183,15 @@ class EigenFacesDemo:
         train_SU = self.load_all(img_folder+'train/*SUS.JPG')
         train_SA = self.load_all(img_folder+'train/*SAS.JPG')
 
-        self.train_datasets = [train_AN,train_SU,train_SA]
-        self.train_labels = len(train_AN)*'N'+len(train_SU)*'U'+len(train_SA)*'A'
-        self.num_train = sum(len(x) for x in self.train_datasets)
+        self.train_datasets = train_AN + train_SU + train_SA
+        #self.train_datasets = [resize_square(find_face(x)) for x in self.train_datasets]
 
-        #init variables to be filled by demo_means()
-        self.means = [0,0,0]
+        self.train_labels = len(train_AN)*'N'+len(train_SU)*'U'+len(train_SA)*'A'
+        self.num_train = len(self.train_labels)
+        print 'loaded {} train_images'.format(self.num_train)
+
+        #init variables to be filled by demo_mean()
+        self.mean = [0,0,0]
         self.evecs = [0,0,0]
         self.train_proj = [0,0,0]
 
@@ -127,11 +222,8 @@ class EigenFacesDemo:
         strings = [
             'Keys:',
             '',
-            'v - Demo eigenvectors',
-            'r - Demo reconstruction',
-            'c - Demo classification',
-            'p - Demo PCA',
-            'm - class means (Actually run)'
+            's - run & SHOW mean+evecs',
+            'h - run & HIDE mean+evecs',
         ]
         for i in range(len(strings)):
             cv2.putText(img, strings[i],
@@ -144,24 +236,22 @@ class EigenFacesDemo:
         while 1:
             k = cv2.waitKey(5)
             func = None
-            if k == ord('v'):
-                func = self.demo_vecs
-            elif k == ord('r'):
-                func = self.demo_reconstruct
-            elif k == ord('c'):
-                func = self.demo_classify
-            elif k == ord('p'):
-                func = self.demo_pca
-            elif k == ord('m'):
-                func = self.demo_means
+            if k == ord('s'):
+                self.show = True
+                func = self.demo_mean
+            elif k == ord('h'):
+                self.show = False
+                func = self.demo_mean
             elif k == 27:
                 break
             if func is not None:
                 cv2.destroyWindow(win)
                 func()
+                self.demo_classify()
                 self.make_window(win)
                 cv2.imshow(win, img)
 
+    """ #Version that had three separate sets of evecs and means
     def demo_means(self):
         win = 'Mean and vectors'
         self.make_window(win)
@@ -187,7 +277,7 @@ class EigenFacesDemo:
             #TODO: take out of loop?
 
         self.test_proj = self.project_all(self.test_datasets, k=0)
-
+        print 'shape of test_proj', self.test_proj.shape
 
 
         cv2.destroyWindow(win)
@@ -195,7 +285,34 @@ class EigenFacesDemo:
         print self.train_proj[0].shape,
         print self.train_proj[1].shape,
         print self.train_proj[2].shape
+    """
+    def demo_mean(self):
+        win = 'Mean and vectors'
+        self.make_window(win)
 
+        self.train_datasets = numpy.array( [ x.flatten() for x in self.train_datasets ] )
+        self.mean, self.evecs = cv2.PCACompute(self.train_datasets, mean=None, maxComponents=20)
+        self.num_vecs = self.evecs.shape[0]
+        print 'got {} eigenvectors'.format(self.num_vecs)
+
+        if self.show:
+            print 'showing mean'
+            img = self.mean.reshape(self.image_shape)
+            cv2.imshow(win, upscale(img))
+            if self.should_quit(): return
+
+            for i in range(self.num_vecs):
+                print 'showing evec', i+1, 'of', self.num_vecs
+                img = self.visualize_evec(self.evecs[i])
+                cv2.imshow(win, upscale(img))
+                if self.should_quit(): break
+
+        #project train and test datasets through the eigenvectors
+        self.train_proj = self.project_all(self.train_datasets)
+        self.test_proj = self.project_all(self.test_datasets)
+        print 'shape of test_proj', self.test_proj.shape
+
+        cv2.destroyWindow(win)
 
     def demo_reconstruct(self):
         win = 'Left: orig., Right: recons.'
@@ -213,7 +330,7 @@ class EigenFacesDemo:
     def demo_classify(self):
         FLANN_INDEX_KDTREE = 1
         flann_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 4)
-        matcher = cv2.flann.Index(self.train_proj[0],flann_params)
+        matcher = cv2.flann.Index(self.train_proj,flann_params)
         # flann - put vector or set of vectors into matcher
         # input to index: matrix w/ every row as potential vector to match
         # train_proj = m x n matrix where m is examples, n is dimensions
@@ -234,10 +351,21 @@ class EigenFacesDemo:
         matches, dist = matcher.knnSearch(self.test_proj, k, params={})
         #m = 20
         print 'matches.shape', matches.shape
-        for i in range(10):
-            print 'matches[i,0]', matches[i,0]
-            print 'label', self.train_labels[matches[i,0]]
-            print 'test type', self.train_labels[i]
+        num_correct = 0
+        wrong = []
+        for i in range(matches.shape[0]):
+            """
+            print 'matches[',i,'0]', matches[i,0]
+            print '   actual   ', self.test_labels[i]
+            print '   NN guess ', self.train_labels[matches[i,0]]
+            """
+            if self.train_labels[matches[i,0]] == self.test_labels[i]:
+                num_correct += 1
+            else:
+                wrong.append(self.test_labels[i]+self.train_labels[matches[i,0]])
+        print '\ngot', num_correct, 'correct out of', matches.shape[0]
+        print '% correct =', num_correct/float(matches.shape[0])
+        print 'wrong were (L-actual, R-NN guess):\n', wrong
 
 #       Linear SVC Stuff
 #        SVC = sklearn.svm.LinearSVC(C=1.0, class_weight=None, dual=True, fit_intercept=True,
@@ -247,14 +375,19 @@ class EigenFacesDemo:
 #
 #        train_new = SVC.fit(train_proj, test_proj
 
-        win = 'Left: query, Right: NN'
+        win = 'Left: test img, Right: NN guess'
         self.make_window(win)
         i = 0
         while 1:
-            imgs = [ self.test_images[i] ]
+            tempTest = self.test_datasets[i]
+            label_emotion(tempTest, self.test_labels[i])
+
+            imgs = [tempTest]
             imgs.append( self.spacer() )
             for j in range(k):
-                imgs.append( self.train_images[matches[i,j]] )
+                tempTrain = self.backproject(self.train_proj[matches[i,j]])
+                label_emotion(tempTrain, self.train_labels[matches[i,j]])
+                imgs.append(tempTrain)
             big = numpy.hstack(imgs)
             cv2.imshow(win, upscale(big))
             if self.should_quit(): break
@@ -362,28 +495,32 @@ class EigenFacesDemo:
         rval = []
         for imgfile in glob.glob(pattern):
             img = cv2.imread(imgfile, cv2.IMREAD_GRAYSCALE)
+
+            # extract just the find_face
+            img = resize_square(find_face(img))
+
             img = img.astype('float32')/255.0
             if self.image_shape is None:
                 self.image_shape = img.shape
+                print 'image shape:', img.shape
             elif img.shape != self.image_shape:
                 print 'bad size: ', imgfile
                 sys.exit(1)
             rval.append(img)
         return rval
 
-    def project(self, img, k):
-        return cv2.PCAProject(img.reshape(self.row_shape), self.means[k], self.evecs[k])
+    def project(self, img):
+        return cv2.PCAProject(img.reshape(self.row_shape), self.mean, self.evecs)
 
-    def backproject(self, w, k):
-        return cv2.PCABackProject(w.reshape((1, self.num_vecs)), self.means[k], self.evecs[k]).reshape(self.image_shape)
+    def backproject(self, w):
+        return cv2.PCABackProject(w.reshape((1, self.num_vecs)), self.mean, self.evecs).reshape(self.image_shape)
 
-    def project_all(self, images, k):
-        return numpy.array([ self.project(x, k).flatten() for x in images ])
+    def project_all(self, images):
+        return numpy.array([ self.project(x).flatten() for x in images ])
 
     def visualize_evec(self, vec):
         return ( 0.5 + (0.5 / numpy.linalg.norm(vec, numpy.inf)) *
                  vec.reshape(self.image_shape) )
-
 
 
 ######################################################################
