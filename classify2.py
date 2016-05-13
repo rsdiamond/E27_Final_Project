@@ -4,8 +4,8 @@
 # Author: Julie Harris, Rachel Diamond
 # Date:   May, 2016
 #
-# This program is heavily based on Matt Zucker's code from April 2012
-# in the programs textons.py and demo.py (for eigenfaces)
+# This program is heavily based on Matt Zucker's code
+# in the programs faceparts.py and demo.py (for eigenfaces)
 #
 # Written for ENGR 27 - Computer Vision
 #
@@ -14,6 +14,7 @@
 Questions/Notes:
  - why does re-running result in worse detection rate?
  - deal with not finding a face
+ - number of eigenvectors
 """
 ########################################################################
 
@@ -22,6 +23,7 @@ import numpy
 import sys
 import glob
 #import sklearn
+from sklearn import svm
 
 ######################################################################
 if len(sys.argv) != 2:
@@ -42,14 +44,14 @@ def upscale(img):
                       interpolation=cv2.INTER_NEAREST)
 
 def resize_square(img):
-    return cv2.resize(img, (250,250),interpolation=cv2.INTER_NEAREST)
+    return cv2.resize(img, (256,256),interpolation=cv2.INTER_NEAREST)
 
 def label_emotion(image, text):
-    if text == 'N':
+    if text == 0:
         label_image(image, 'angry')
-    elif text == 'U':
+    elif text == 1:
         label_image(image, 'suprised')
-    elif text == 'A':
+    elif text == 2:
         label_image(image, 'sad')
     else:
         label_image(image, 'unspecified')
@@ -172,10 +174,13 @@ class EigenFacesDemo:
 
         #self.test_datasets = [test_AN,test_SU,test_SA]
         self.test_datasets = test_AN + test_SU + test_SA
-        #self.test_datasets = [resize_square(find_face(x)) for x in self.test_datasets]
-        self.test_labels = len(test_AN)*'N'+len(test_SU)*'U'+len(test_SA)*'A'
+        self.num_test = len(self.test_datasets)
+        self.test_labels = numpy.zeros(self.num_test)
+        # 0 means angry, 1 means surprised, 2 means sad
+        self.test_labels[len(test_AN):len(test_AN)+len(test_SU)] = 1
+        self.test_labels[len(test_AN)+len(test_SU):] = 2
+        self.test_strlabels = len(test_AN)*'N'+len(test_SU)*'U'+len(test_SA)*'A'
 
-        self.num_test = len(self.test_labels)
         #self.test_proj = self.project_all(self.test_images)
         print 'loaded {} test_images'.format(self.num_test)
 
@@ -184,11 +189,22 @@ class EigenFacesDemo:
         train_SA = self.load_all(img_folder+'train/*SAS.JPG')
 
         self.train_datasets = train_AN + train_SU + train_SA
-        #self.train_datasets = [resize_square(find_face(x)) for x in self.train_datasets]
+        self.num_train = len(self.train_datasets)
 
-        self.train_labels = len(train_AN)*'N'+len(train_SU)*'U'+len(train_SA)*'A'
-        self.num_train = len(self.train_labels)
+        self.train_labels = numpy.zeros(self.num_train).reshape(self.num_train,1)
+        # 0 means angry, 1 means surprised, 2 means sad
+        self.train_labels[len(train_AN):len(train_AN)+len(train_SU)] = 1
+        self.train_labels[len(train_AN)+len(train_SU):] = 2
+        self.train_strlabels = len(train_AN)*'N'+len(train_SU)*'U'+len(train_SA)*'A'
+
         print 'loaded {} train_images'.format(self.num_train)
+
+        #compute means for each emotion
+        self.mean_imgs = [sum(train_AN)/float(len(train_AN)),
+                          sum(train_SU)/float(len(train_SU)),
+                          sum(train_SA)/float(len(train_SA))]
+        for i in range(len(self.mean_imgs)):
+            label_emotion(self.mean_imgs[i],i)
 
         #init variables to be filled by demo_mean()
         self.mean = [0,0,0]
@@ -224,6 +240,7 @@ class EigenFacesDemo:
             '',
             's - run & SHOW mean+evecs',
             'h - run & HIDE mean+evecs',
+            'l - run w/ linearSVC'
         ]
         for i in range(len(strings)):
             cv2.putText(img, strings[i],
@@ -238,16 +255,22 @@ class EigenFacesDemo:
             func = None
             if k == ord('s'):
                 self.show = True
-                func = self.demo_mean
+                self.demo_mean()
+                func = self.demo_classify
             elif k == ord('h'):
                 self.show = False
-                func = self.demo_mean
+                self.demo_mean()
+                func = self.demo_classify
+            elif k == ord('l'):
+                self.show = False
+                self.demo_mean()
+                func = self.demo_linearSVC()
             elif k == 27:
                 break
             if func is not None:
                 cv2.destroyWindow(win)
                 func()
-                self.demo_classify()
+                #self.display_matches()
                 self.make_window(win)
                 cv2.imshow(win, img)
 
@@ -313,7 +336,7 @@ class EigenFacesDemo:
         print 'shape of test_proj', self.test_proj.shape
 
         cv2.destroyWindow(win)
-
+    """
     def demo_reconstruct(self):
         win = 'Left: orig., Right: recons.'
         self.make_window(win)
@@ -326,6 +349,50 @@ class EigenFacesDemo:
             if self.should_quit(): break
             i = (i + 1) % self.num_train
         cv2.destroyWindow(win)
+    """
+    def demo_linearSVC(self):
+        classifier = svm.LinearSVC()
+        classifier.fit(self.train_proj,numpy.ravel(self.train_labels))
+        matches = classifier.predict(self.test_proj)
+
+        num_correct = 0
+        wrong = []
+        matchesstr = ""
+        for i in range(matches.shape[0]):
+            if matches[i] == 0:
+                matchesstr += 'N'
+            elif matches[i] == 1:
+                matchesstr += 'U'
+            elif matches[i] == 2:
+                matchesstr += 'A'
+
+            if matches[i] == self.test_labels[i]:
+                num_correct += 1
+            else:
+                wrong.append(self.test_strlabels[i]+matchesstr[i])
+        print '\ngot', num_correct, 'correct out of', matches.shape[0]
+        print '% correct =', num_correct/float(matches.shape[0])
+        print 'wrong were (L-actual, R-linearSVC guess):\n', wrong
+
+        #display matches
+        win = 'Left: test img, Right: mean img for linearSVC guess'
+        self.make_window(win)
+        i = 0
+        while 1:
+            tempTest = self.test_datasets[i]
+            label_emotion(tempTest, self.test_labels[i])
+
+            imgs = [tempTest]
+            imgs.append( self.spacer() )
+            imgs.append(self.mean_imgs[int(matches[i])])
+
+            big = numpy.hstack(imgs)
+            cv2.imshow(win, upscale(big))
+            if self.should_quit(): break
+            i = (i + 1) % self.num_test
+        cv2.destroyWindow(win)
+
+
 
     def demo_classify(self):
         FLANN_INDEX_KDTREE = 1
@@ -349,7 +416,7 @@ class EigenFacesDemo:
 
         k = 1 #how many closest matches to return
         matches, dist = matcher.knnSearch(self.test_proj, k, params={})
-        #m = 20
+
         print 'matches.shape', matches.shape
         num_correct = 0
         wrong = []
@@ -362,7 +429,7 @@ class EigenFacesDemo:
             if self.train_labels[matches[i,0]] == self.test_labels[i]:
                 num_correct += 1
             else:
-                wrong.append(self.test_labels[i]+self.train_labels[matches[i,0]])
+                wrong.append(self.test_strlabels[i]+self.train_strlabels[matches[i,0]])
         print '\ngot', num_correct, 'correct out of', matches.shape[0]
         print '% correct =', num_correct/float(matches.shape[0])
         print 'wrong were (L-actual, R-NN guess):\n', wrong
@@ -393,7 +460,7 @@ class EigenFacesDemo:
             if self.should_quit(): break
             i = (i + 1) % self.num_test
         cv2.destroyWindow(win)
-
+    """
     def demo_vecs(self):
 
         win = 'Mean and vectors'
@@ -412,6 +479,7 @@ class EigenFacesDemo:
             if self.should_quit(): break
             i = (i + 1) % (self.num_vecs + 1)
         cv2.destroyWindow(win)
+
 
     def trk_change(self, i, value):
         #print '{}={}'.format(which, value)
@@ -490,6 +558,7 @@ class EigenFacesDemo:
 
         cv2.destroyWindow(win)
         for ewin in ewins: cv2.destroyWindow(ewin)
+    """
 
     def load_all(self, pattern):
         rval = []
