@@ -1,6 +1,6 @@
 ########################################################################
 #
-# File:   classify.py
+# File:   classify2.py
 # Author: Julie Harris, Rachel Diamond
 # Date:   May, 2016
 #
@@ -26,14 +26,30 @@ import glob
 from sklearn import svm
 
 ######################################################################
-if len(sys.argv) != 2:
-    print 'usage: python', sys.argv[0], 'filepath_to_train_and_test_folders'
-    print ' e.g.: python', sys.argv[0], 'images/faces/'
-    print '   or: python', sys.argv[0], 'images/small/'
+if len(sys.argv) != 3:
+    print 'usage: python', sys.argv[0], 'train_images', 'test_images'
+    print ' e.g.: python', sys.argv[0], 'images/all/train/', 0, '(for camera)'
+    print '   or: python', sys.argv[0], 'images/all/train/', 'images/all/test/'
     print
     sys.exit(0)
 
-img_folder = sys.argv[1]
+# For test images you can specify a video device (e.g. 0) on the command line,
+# or a folder of static image files
+
+cap = None
+test_img_folder = None
+train_img_folder = sys.argv[1]
+
+try:
+    device_num = int(sys.argv[2])
+    cap = cv2.VideoCapture(device_num)
+except:
+    test_img_folder = sys.argv[2]
+
+if cap is None and test_img_folder is None:
+    print 'Failed to load test images'
+    sys.exit(0)
+
 ######################################################################
 
 zoom = 1 #DEBUG was 4
@@ -70,7 +86,7 @@ def label_image(image, text):
 
 #CODE TO CROP TO FACES
 ########################################################################
-def find_face(img):
+def find_face(img,showBox):
     # img should be grayscale
     # returns a square subimage that is just the detected face
     # if no face is found, returns None
@@ -111,22 +127,24 @@ def find_face(img):
         # upscale it to get ROI in big image
         x,y,w,h = rect_scale(face_rect, scl)
 
-        """
-        # draw rectangle in big image
-        cv2.rectangle(img, (x,y), (x+w, y+h), (0,0,255), 1)
-        """
+        if showBox:
+            # draw rectangle in big image
+            cv2.rectangle(img, (x,y), (x+w, y+h), (0,0,255), 1)
 
         # get subimage in ROI
-        return img[y:y+h, x:x+h]
+        ret = img[y:y+h, x:x+h]
+    else:
+        ret =  None
 
-    return None
-    """
-    cv2.namedWindow('win')
-    cv2.imshow('win', img)
-    k = cv2.waitKey(5)
-    if k == 27:
-        sys.exit(0)
-    """
+    if showBox:
+        cv2.namedWindow('win')
+        cv2.imshow('win', img)
+        k = cv2.waitKey(5)
+        if k == 27:
+            sys.exit(0)
+
+    return ret
+
 # Downsample an image to have no more than the specified maximum height
 def downsample(src, hmax):
     h, w = src.shape[:2]
@@ -143,50 +161,14 @@ def rect_scale(rect,scl):
     return numpy.array(rect)*scl
 ########################################################################
 
-
 class EigenFacesDemo:
 
     def __init__(self):
         self.image_shape = None
-        """
-        # AN or N = angry, SU or U = suprised, SA or A = sad
-        train_AN = self.load_all(img_folder+'train/*ANS.JPG')
-        train_SU = self.load_all(img_folder+'train/*SUS.JPG')
-        train_SA = self.load_all(img_folder+'train/*SAS.JPG')
-        self.train_images = train_AN + train_SU + train_SA
-        self.train_labels = len(train_AN)*'N'+len(train_SU)*'U'+len(train_SA)*'A'
 
-        print 'loaded {} train_images'.format(self.num_train)
-
-        self.train_data = numpy.array( [ x.flatten() for x in self.train_images ] )
-
-        self.mean, self.evecs = cv2.PCACompute(self.train_data, mean=None, maxComponents=40)
-
-        self.num_vecs = self.evecs.shape[0]
-        print 'got {} eigenvectors'.format(self.num_vecs)
-
-        self.train_proj = self.project_all(self.train_images)
-        """
-        # AN or N = angry, SU or U = suprised, SA or A = sad
-        test_AN = self.load_all(img_folder+'test/*ANS.JPG')
-        test_SU = self.load_all(img_folder+'test/*SUS.JPG')
-        test_SA = self.load_all(img_folder+'test/*SAS.JPG')
-
-        #self.test_datasets = [test_AN,test_SU,test_SA]
-        self.test_datasets = test_AN + test_SU + test_SA
-        self.num_test = len(self.test_datasets)
-        self.test_labels = numpy.zeros(self.num_test)
-        # 0 means angry, 1 means surprised, 2 means sad
-        self.test_labels[len(test_AN):len(test_AN)+len(test_SU)] = 1
-        self.test_labels[len(test_AN)+len(test_SU):] = 2
-        self.test_strlabels = len(test_AN)*'N'+len(test_SU)*'U'+len(test_SA)*'A'
-
-        #self.test_proj = self.project_all(self.test_images)
-        print 'loaded {} test_images'.format(self.num_test)
-
-        train_AN = self.load_all(img_folder+'train/*ANS.JPG')
-        train_SU = self.load_all(img_folder+'train/*SUS.JPG')
-        train_SA = self.load_all(img_folder+'train/*SAS.JPG')
+        train_AN = self.load_all(train_img_folder+'*ANS.JPG')
+        train_SU = self.load_all(train_img_folder+'*SUS.JPG')
+        train_SA = self.load_all(train_img_folder+'*SAS.JPG')
 
         self.train_datasets = train_AN + train_SU + train_SA
         self.num_train = len(self.train_datasets)
@@ -216,6 +198,23 @@ class EigenFacesDemo:
         self.image_pixels = self.image_w*self.image_h
         self.row_shape = (1, self.image_pixels)
 
+    def load_test(self):
+        # AN or N = angry, SU or U = suprised, SA or A = sad
+        test_AN = self.load_all(test_img_folder+'*ANS.JPG')
+        test_SU = self.load_all(test_img_folder+'*SUS.JPG')
+        test_SA = self.load_all(test_img_folder+'*SAS.JPG')
+
+        #self.test_datasets = [test_AN,test_SU,test_SA]
+        self.test_datasets = test_AN + test_SU + test_SA
+        self.num_test = len(self.test_datasets)
+        self.test_labels = numpy.zeros(self.num_test)
+        # 0 means angry, 1 means surprised, 2 means sad
+        self.test_labels[len(test_AN):len(test_AN)+len(test_SU)] = 1
+        self.test_labels[len(test_AN)+len(test_SU):] = 2
+        self.test_strlabels = len(test_AN)*'N'+len(test_SU)*'U'+len(test_SA)*'A'
+
+        #self.test_proj = self.project_all(self.test_images)
+        print 'loaded {} test_images'.format(self.num_test)
 
     def spacer(self):
         return numpy.zeros( (self.image_h, 8), dtype='float32' )
@@ -233,6 +232,7 @@ class EigenFacesDemo:
         cv2.moveWindow(win, x, y)
 
     def demo_menu(self):
+        self.load_test()
         win = 'Menu'
         img = 255*numpy.ones((150, 250, 3), dtype='uint8')
         strings = [
@@ -274,51 +274,16 @@ class EigenFacesDemo:
                 self.make_window(win)
                 cv2.imshow(win, img)
 
-    """ #Version that had three separate sets of evecs and means
-    def demo_means(self):
-        win = 'Mean and vectors'
-        self.make_window(win)
-
-        for k in range(len(self.train_datasets)):
-            self.train_datasets[k] = numpy.array( [ x.flatten() for x in self.train_datasets[k] ] )
-            self.means[k], self.evecs[k] = cv2.PCACompute(self.train_datasets[k], mean=None, maxComponents=20)
-            num_vecs = self.evecs[k].shape[0]
-            print 'got {} eigenvectors'.format(num_vecs)
-
-            print 'showing mean'
-            img = self.means[k].reshape(self.image_shape)
-            cv2.imshow(win, upscale(img))
-            if self.should_quit(): break
-
-            for i in range(num_vecs):
-                print 'showing evec', i+1, 'of', num_vecs
-                img = self.visualize_evec(self.evecs[k][i])
-                cv2.imshow(win, upscale(img))
-                if self.should_quit(): break
-
-            self.train_proj[k] = self.project_all(self.train_datasets[k], k)
-            #TODO: take out of loop?
-
-        self.test_proj = self.project_all(self.test_datasets, k=0)
-        print 'shape of test_proj', self.test_proj.shape
-
-
-        cv2.destroyWindow(win)
-        print len(self.train_proj)
-        print self.train_proj[0].shape,
-        print self.train_proj[1].shape,
-        print self.train_proj[2].shape
-    """
     def demo_mean(self):
-        win = 'Mean and vectors'
-        self.make_window(win)
-
         self.train_datasets = numpy.array( [ x.flatten() for x in self.train_datasets ] )
         self.mean, self.evecs = cv2.PCACompute(self.train_datasets, mean=None, maxComponents=20)
         self.num_vecs = self.evecs.shape[0]
         print 'got {} eigenvectors'.format(self.num_vecs)
 
         if self.show:
+            win = 'Mean and vectors'
+            self.make_window(win)
+
             print 'showing mean'
             img = self.mean.reshape(self.image_shape)
             cv2.imshow(win, upscale(img))
@@ -329,27 +294,32 @@ class EigenFacesDemo:
                 img = self.visualize_evec(self.evecs[i])
                 cv2.imshow(win, upscale(img))
                 if self.should_quit(): break
+            cv2.destroyWindow(win)
 
         #project train and test datasets through the eigenvectors
         self.train_proj = self.project_all(self.train_datasets)
         self.test_proj = self.project_all(self.test_datasets)
         print 'shape of test_proj', self.test_proj.shape
 
-        cv2.destroyWindow(win)
-    """
-    def demo_reconstruct(self):
-        win = 'Left: orig., Right: recons.'
-        self.make_window(win)
-        i = 0
-        while 1:
-            big = numpy.hstack( ( demo.train_images[i],
-                                  self.spacer(),
-                                  demo.backproject(demo.train_proj[i]) ) )
-            cv2.imshow(win, upscale(big))
-            if self.should_quit(): break
-            i = (i + 1) % self.num_train
-        cv2.destroyWindow(win)
-    """
+
+    def demo_camera1(self):
+        self.train_datasets = numpy.array( [ x.flatten() for x in self.train_datasets ] )
+        self.mean, self.evecs = cv2.PCACompute(self.train_datasets, mean=None, maxComponents=20)
+        self.num_vecs = self.evecs.shape[0]
+        print 'got {} eigenvectors'.format(self.num_vecs)
+
+        #project train and test datasets through the eigenvectors
+        self.train_proj = self.project_all(self.train_datasets)
+
+
+    def demo_camera2(self, img):
+        img = img.astype('float32')/255.0
+        if img.shape != self.image_shape:
+            print 'bad size: ', imgfile
+            sys.exit(1)
+
+        self.test_proj = self.project(img).flatten()
+
     def demo_linearSVC(self):
         classifier = svm.LinearSVC()
         classifier.fit(self.train_proj,numpy.ravel(self.train_labels))
@@ -372,7 +342,7 @@ class EigenFacesDemo:
                 wrong.append(self.test_strlabels[i]+matchesstr[i])
         print '\ngot', num_correct, 'correct out of', matches.shape[0]
         print '% correct =', num_correct/float(matches.shape[0])
-        print 'wrong were (L-actual, R-linearSVC guess):\n', wrong
+        print 'wrong were (L-actual, R-linearSVC guess):', wrong
 
         #display matches
         win = 'Left: test img, Right: mean img for linearSVC guess'
@@ -434,14 +404,6 @@ class EigenFacesDemo:
         print '% correct =', num_correct/float(matches.shape[0])
         print 'wrong were (L-actual, R-NN guess):\n', wrong
 
-#       Linear SVC Stuff
-#        SVC = sklearn.svm.LinearSVC(C=1.0, class_weight=None, dual=True, fit_intercept=True,
-#            intercept_scaling=1, loss='squared_hinge', max_iter=1000,
-#            multi_class='ovr', penalty='12', random_state=None, tol=0.0001,
-#            verbose=0)
-#
-#        train_new = SVC.fit(train_proj, test_proj
-
         win = 'Left: test img, Right: NN guess'
         self.make_window(win)
         i = 0
@@ -460,105 +422,6 @@ class EigenFacesDemo:
             if self.should_quit(): break
             i = (i + 1) % self.num_test
         cv2.destroyWindow(win)
-    """
-    def demo_vecs(self):
-
-        win = 'Mean and vectors'
-        self.make_window(win)
-        i = self.num_vecs
-
-
-        while 1:
-            if (i >= self.num_vecs):
-                print 'showing mean'
-                img = self.mean.reshape(self.image_shape)
-            else:
-                print 'showing evec'
-                img = self.visualize_evec(self.evecs[i])
-            cv2.imshow(win, upscale(img))
-            if self.should_quit(): break
-            i = (i + 1) % (self.num_vecs + 1)
-        cv2.destroyWindow(win)
-
-
-    def trk_change(self, i, value):
-        #print '{}={}'.format(which, value)
-        wmin = self.wmin[i]
-        wmax = self.wmax[i]
-        self.w[i] = wmin + (value/100.0)*(wmax-wmin)
-        img = self.backproject(self.w)
-        cv2.imshow('Output', upscale(img))
-
-    def update_w(self):
-        img = self.backproject(self.w)
-        cv2.imshow('Output', upscale(img))
-        v = (100 * (self.w - self.wmin) / (self.wmax - self.wmin)).astype('int')
-        v[v < 0] = 0
-        v[v > 100] = 100
-        for i in range(self.num_vecs):
-            cv2.setTrackbarPos(self.tnames[i], self.twins[i], v[i])
-
-    def randomize_w(self, scale):
-        self.w = numpy.random.normal(scale=scale, size=self.num_vecs)
-        self.update_w()
-
-    def reset_w(self):
-        self.w[:] = 0
-        self.update_w()
-
-    def demo_pca(self):
-
-        win = 'Output'
-        self.make_window(win)
-
-        numwins = 0
-        wincnt = -1
-        winx = self.image_w*zoom + 20+50
-
-        self.w = numpy.zeros(self.num_vecs, dtype='float32')
-        self.wmin = self.test_proj.min(axis=0)
-        self.wmax = self.test_proj.max(axis=0)
-
-        self.twins = []
-        self.tnames = []
-        ewins = []
-
-        for i in range(self.num_vecs):
-
-            if wincnt < 0 or wincnt > self.num_vecs/2:
-                numwins += 1
-                ewin = 'Eigenvectors {}'.format(numwins)
-                self.make_window(ewin, x=winx)
-                winx += 250
-                wincnt = 0
-                cv2.imshow(ewin, numpy.zeros((1,200)))
-                ewins.append(ewin)
-
-            tname = 'Eigenvector {}'.format(i+1)
-            tfunc = lambda value, which=i: self.trk_change(which, value)
-            cv2.createTrackbar(tname, ewin, 50, 100, tfunc)
-            #cv2.imshow(ewin, numpy.zeros((1,200)))
-            self.twins.append(ewin)
-            self.tnames.append(tname)
-
-            wincnt += 1
-
-        img = self.mean.reshape(self.image_shape)
-        cv2.imshow(win, upscale(img))
-        while 1:
-            k = cv2.waitKey(5)
-            if k == 27:
-                break
-            elif k == ord('r'):
-                self.randomize_w(0.75)
-            elif k == ord('R'):
-                self.randomize_w(3.0)
-            elif k == ord('z'):
-                self.reset_w()
-
-        cv2.destroyWindow(win)
-        for ewin in ewins: cv2.destroyWindow(ewin)
-    """
 
     def load_all(self, pattern):
         rval = []
@@ -566,7 +429,7 @@ class EigenFacesDemo:
             img = cv2.imread(imgfile, cv2.IMREAD_GRAYSCALE)
 
             # extract just the find_face
-            img = resize_square(find_face(img))
+            img = resize_square(find_face(img,0))
 
             img = img.astype('float32')/255.0
             if self.image_shape is None:
@@ -597,9 +460,34 @@ class EigenFacesDemo:
 if __name__ == '__main__':
     demo = EigenFacesDemo()
 
-    demo.demo_menu()
+    if cap is None: #test images from folder
+        demo.demo_menu()
 
-    #demo.demo_pca()
-    #demo.demo_vecs()
-    #demo.demo_classify()
-    #demo.demo_reconstruct()
+    else: #test images from camera
+        demo.demo_camera1()
+
+        # Create our window
+        #win = cv2.namedWindow('face')
+        classifier = svm.LinearSVC()
+        classifier.fit(demo.train_proj,numpy.ravel(demo.train_labels))
+
+        while True:
+            ok, img = cap.read()
+            if not ok or img is None:
+                print 'Error getting image from camera'
+                break
+
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+            # extract just the face
+            face = find_face(img, 1)
+            if face is None:
+                continue
+
+            face = resize_square(face)
+            demo.demo_camera2(face)
+            label = classifier.predict(demo.test_proj)
+            label_emotion(face, label[0])
+
+            cv2.imshow('emotion', face)
+            if demo.should_quit(): break
