@@ -13,8 +13,6 @@
 """
 Questions/Notes:
  - why does re-running result in worse detection rate?
- - deal with not finding a face
- - number of eigenvectors
 """
 ########################################################################
 
@@ -22,13 +20,12 @@ import cv2
 import numpy
 import sys
 import glob
-#import sklearn
 from sklearn import svm
 
 ######################################################################
 if len(sys.argv) != 3:
     print 'usage: python', sys.argv[0], 'train_images', 'test_images'
-    print ' e.g.: python', sys.argv[0], 'images/all/train/', 0, '(for camera)'
+    print ' e.g.: python', sys.argv[0], 'images/all/train/', 0, '(for camera input)'
     print '   or: python', sys.argv[0], 'images/all/train/', 'images/all/test/'
     print
     sys.exit(0)
@@ -52,7 +49,7 @@ if cap is None and test_img_folder is None:
 
 ######################################################################
 
-zoom = 1 #DEBUG was 4
+zoom = 1 #can change this to make images fit on screen
 face_detector = cv2.CascadeClassifier('haarcascade_frontalface_alt.xml')
 
 def upscale(img):
@@ -76,15 +73,16 @@ def label_image(image, text):
 
     h = image.shape[0]
 
-    cv2.putText(image, text, (8, h-16),
+    cv2.putText(image, text, (8, 32),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (0,0,0), 3, cv2.LINE_AA)
 
-    cv2.putText(image, text, (8, h-16),
+    cv2.putText(image, text, (8, 32),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (255,255,255), 1, cv2.LINE_AA)
 
-#CODE TO CROP TO FACES
+########################################################################
+# Functions for cropping to faces
 ########################################################################
 def find_face(img,showBox):
     # img should be grayscale
@@ -92,10 +90,6 @@ def find_face(img,showBox):
     # if no face is found, returns None
 
     face_rect = None
-
-    #only want to load this once, so make it global variable instead of defining here
-    #face_detector = cv2.CascadeClassifier('haarcascade_frontalface_alt.xml')
-
 
     # Downsample for faster runtime -- this is important!
     img_small = downsample(img, 320)
@@ -161,37 +155,34 @@ def rect_scale(rect,scl):
     return numpy.array(rect)*scl
 ########################################################################
 
-class EigenFacesDemo:
+class EmotionClassifier:
 
     def __init__(self):
         self.image_shape = None
 
+        # load training images by emotion
         train_AN = self.load_all(train_img_folder+'*ANS.JPG')
         train_SU = self.load_all(train_img_folder+'*SUS.JPG')
         train_SA = self.load_all(train_img_folder+'*SAS.JPG')
 
         self.train_datasets = train_AN + train_SU + train_SA
         self.num_train = len(self.train_datasets)
+        print 'loaded {} train_images'.format(self.num_train)
 
-        self.train_labels = numpy.zeros(self.num_train).reshape(self.num_train,1)
+        # keep track of what emotion each image is using integer tags where
         # 0 means angry, 1 means surprised, 2 means sad
+        self.train_labels = numpy.zeros(self.num_train).reshape(self.num_train,1)
         self.train_labels[len(train_AN):len(train_AN)+len(train_SU)] = 1
         self.train_labels[len(train_AN)+len(train_SU):] = 2
         self.train_strlabels = len(train_AN)*'N'+len(train_SU)*'U'+len(train_SA)*'A'
 
-        print 'loaded {} train_images'.format(self.num_train)
-
-        #compute means for each emotion
+        # compute means for each emotion, used to display for comparison with
+        # the results of classification using linearSVC
         self.mean_imgs = [sum(train_AN)/float(len(train_AN)),
                           sum(train_SU)/float(len(train_SU)),
                           sum(train_SA)/float(len(train_SA))]
         for i in range(len(self.mean_imgs)):
             label_emotion(self.mean_imgs[i],i)
-
-        #init variables to be filled by demo_mean()
-        self.mean = [0,0,0]
-        self.evecs = [0,0,0]
-        self.train_proj = [0,0,0]
 
         self.image_w = self.image_shape[1]
         self.image_h = self.image_shape[0]
@@ -234,18 +225,18 @@ class EigenFacesDemo:
     def demo_menu(self):
         self.load_test()
         win = 'Menu'
-        img = 255*numpy.ones((150, 250, 3), dtype='uint8')
+        img = 255*numpy.ones((150, 330, 3), dtype='uint8')
         strings = [
             'Keys:',
             '',
-            's - run & SHOW mean+evecs',
-            'h - run & HIDE mean+evecs',
+            's - run w/ NN & SHOW mean+evecs',
+            'h - run w/ NN & HIDE mean+evecs',
             'l - run w/ linearSVC'
         ]
         for i in range(len(strings)):
             cv2.putText(img, strings[i],
                         (10, 20 + 20*i),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0),
+                        cv2.FONT_HERSHEY_COMPLEX, 0.5, (0,0,0),
                         1, cv2.LINE_AA)
 
         self.make_window(win)
@@ -255,26 +246,24 @@ class EigenFacesDemo:
             func = None
             if k == ord('s'):
                 self.show = True
-                self.demo_mean()
-                func = self.demo_classify
+                func = self.demo_NNclassify
             elif k == ord('h'):
                 self.show = False
-                self.demo_mean()
-                func = self.demo_classify
+                func = self.demo_NNclassify
             elif k == ord('l'):
                 self.show = False
-                self.demo_mean()
                 func = self.demo_linearSVC()
             elif k == 27:
                 break
             if func is not None:
                 cv2.destroyWindow(win)
+                self.compute_eigen()
+                self.project_test()
                 func()
-                #self.display_matches()
                 self.make_window(win)
                 cv2.imshow(win, img)
 
-    def demo_mean(self):
+    def compute_eigen(self):
         self.train_datasets = numpy.array( [ x.flatten() for x in self.train_datasets ] )
         self.mean, self.evecs = cv2.PCACompute(self.train_datasets, mean=None, maxComponents=20)
         self.num_vecs = self.evecs.shape[0]
@@ -296,29 +285,29 @@ class EigenFacesDemo:
                 if self.should_quit(): break
             cv2.destroyWindow(win)
 
-        #project train and test datasets through the eigenvectors
+        # project train and test datasets through the eigenvectors
+        # train and test_proj are the weights that would be applied to the
+        # eigenvecs to approximate the train and test images as closely as possible
         self.train_proj = self.project_all(self.train_datasets)
+
+    def project_test():
         self.test_proj = self.project_all(self.test_datasets)
-        print 'shape of test_proj', self.test_proj.shape
 
+    def camera_frame_to_weights(self, img):
+        img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 
-    def demo_camera1(self):
-        self.train_datasets = numpy.array( [ x.flatten() for x in self.train_datasets ] )
-        self.mean, self.evecs = cv2.PCACompute(self.train_datasets, mean=None, maxComponents=20)
-        self.num_vecs = self.evecs.shape[0]
-        print 'got {} eigenvectors'.format(self.num_vecs)
+        # extract just the face
+        face = find_face(img, 1)
+        if face is None: # no face found
+            return None
 
-        #project train and test datasets through the eigenvectors
-        self.train_proj = self.project_all(self.train_datasets)
+        face = resize_square(face).astype('float32')/255.0
 
-
-    def demo_camera2(self, img):
-        img = img.astype('float32')/255.0
-        if img.shape != self.image_shape:
-            print 'bad size: ', imgfile
+        if face.shape != self.image_shape: #this should never happen, just in case
+            print 'Error in finding face, face image is wrong dimensions'
             sys.exit(1)
 
-        self.test_proj = self.project(img).flatten()
+        return self.project_all([face])
 
     def demo_linearSVC(self):
         classifier = svm.LinearSVC()
@@ -364,7 +353,7 @@ class EigenFacesDemo:
 
 
 
-    def demo_classify(self):
+    def demo_NNclassify(self):
         FLANN_INDEX_KDTREE = 1
         flann_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 4)
         matcher = cv2.flann.Index(self.train_proj,flann_params)
@@ -384,18 +373,12 @@ class EigenFacesDemo:
         # indexes in original training data
         # train_proj = PCA weights of every single training image
 
-        k = 1 #how many closest matches to return
+        k = 1 # how many closest matches to return
         matches, dist = matcher.knnSearch(self.test_proj, k, params={})
 
-        print 'matches.shape', matches.shape
         num_correct = 0
         wrong = []
         for i in range(matches.shape[0]):
-            """
-            print 'matches[',i,'0]', matches[i,0]
-            print '   actual   ', self.test_labels[i]
-            print '   NN guess ', self.train_labels[matches[i,0]]
-            """
             if self.train_labels[matches[i,0]] == self.test_labels[i]:
                 num_correct += 1
             else:
@@ -434,7 +417,6 @@ class EigenFacesDemo:
             img = img.astype('float32')/255.0
             if self.image_shape is None:
                 self.image_shape = img.shape
-                print 'image shape:', img.shape
             elif img.shape != self.image_shape:
                 print 'bad size: ', imgfile
                 sys.exit(1)
@@ -458,16 +440,16 @@ class EigenFacesDemo:
 ######################################################################
 
 if __name__ == '__main__':
-    demo = EigenFacesDemo()
+    demo = EmotionClassifier()
 
-    if cap is None: #test images from folder
+    if cap is None: # test images from folder -> give options menu
         demo.demo_menu()
 
-    else: #test images from camera
-        demo.demo_camera1()
+    else: # test images from camera
+        demo.show = False # don't display mean and evecs
+        demo.compute_eigen()
 
-        # Create our window
-        #win = cv2.namedWindow('face')
+        # train the classifer
         classifier = svm.LinearSVC()
         classifier.fit(demo.train_proj,numpy.ravel(demo.train_labels))
 
@@ -477,17 +459,15 @@ if __name__ == '__main__':
                 print 'Error getting image from camera'
                 break
 
-            img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-
-            # extract just the face
-            face = find_face(img, 1)
-            if face is None:
+            weights = demo.camera_frame_to_weights(img)
+            if weights is None: #no face was found
                 continue
 
-            face = resize_square(face)
-            demo.demo_camera2(face)
-            label = classifier.predict(demo.test_proj)
-            label_emotion(face, label[0])
+            label = classifier.predict(weights.reshape(1,-1))
+            label_emotion(img, label[0])
 
-            cv2.imshow('emotion', face)
-            if demo.should_quit(): break
+            cv2.imshow('emotion', img)
+            k = cv2.waitKey(100)
+            if k == 27:
+                sys.exit(0)
+            #if demo.should_quit(): break
